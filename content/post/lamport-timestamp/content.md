@@ -3,20 +3,20 @@ How do you order events that happens between and within distributed processes? L
 1. All the events that happened within itself
 2. And all events related to sending and receiving messages between processes
 
-To sort the list of events, we would need to determine if a particular event _happens before_ another event. One option would be to tag each event with DateTime of when the event occurred. Alternatively, one could also use Unix Timestamp, instead of DateTime, and avoid all the hassle of timezone and daylight savings time. But, there is no guarantee that time runs the same in all the distributed processes. Time synchronisation with NTP have accuracy level within tens of milliseconds, assuming the network is good and polled within 36 hours [1]. Another risk would be _Leap Second_ and the documented problems arising from it [2]
+To sort the list of events, we would need to determine if a particular event _happens before_ another event. One option would be to tag each event with DateTime of when the event occurred. Alternatively, one could also use Unix Timestamp, instead of DateTime, and avoid all the hassle of timezone and daylight savings time. But, there is no guarantee that time runs the same in all the distributed processes. Time synchronisation with NTP have an accuracy level within tens of milliseconds, assuming the network is good and polled within 36 hours[^1]. Another risk would be _Leap Second_ and the documented problems arising from it[^2].
 
-DateTime and Unix Timestamp are considered as _Physical Clocks_. Alternative to them are _Logical Clock_ and we are going to implement one of such clock called Lamport Timestamp (or Lamport’s Logical Clock). The implementation is heavily inspired by the famous paper by Leslie Lamport, titled “Time, Clocks, and the Ordering of Events in a Distributed System” [3]. Anytime _clock_ is mentioned after this, it will refer to _Logical Clock_.
+DateTime and Unix Timestamp are considered as _Physical Clocks_. Alternative to them are _Logical Clock_ and we are going to implement one of such clock called Lamport Timestamp (or Lamport’s Logical Clock). The implementation is heavily inspired by the famous paper by Leslie Lamport, titled “Time, Clocks, and the Ordering of Events in a Distributed System”[^3]. Anytime _clock_ is mentioned after this, it will refer to _Logical Clock_. Below are a few definitions that has been extracted from the paper.
 
 ## Definition (DEF)
 
-1. If `a` and `b` are events in the same process and `a` happens before `b`, then `a -> b` . The `->` means _happens before_.
+1. If `a` and `b` are events in the same process and `a` happens before `b`, then `a -> b`. The `->` means _happens before_.
 2. If `a` is the sending of a message by one process and `b` is the receipt of the same message by another process, then `a -> b`.
 3. If `a -> b` and `b -> c` then `a -> c`.  This means the ordering of the events are transitive.
-4. Two distinct events `a` and `b` are said to be concurrent if  `a -/-> b` and `b -/-> a`. This would happen if `a` and `b` happens in separate processes and there were no messages sent or received among the two processes between event `a` and `b`.
+4. Two distinct events `a` and `b` are said to be concurrent if `a -/> b` and `b -/> a`. This would happen if `a` and `b` happens in separate processes and there were no messages sent or received among the two processes between event `a` and `b`.
 
 ## Distributed events between processes
 
-The logical clock can be implemented simply as a counter. In order to view which clock belongs to which process, we’ll create a `Clock` struct with a `timestamp` field to act as a counter and a `process_name` to identify the process it belongs to. For convenience, the code below also includes two functions for interfacing with the `Clock`:
+The logical clock can be implemented simply as a counter. To view which clock belongs to which process, we’ll create a `Clock` struct with a `timestamp` field to act as a counter and a `process_name` to identify the process it belongs to. For convenience, the code below also includes two functions for interfacing with the `Clock`:
 
 1. `increment` which returns a new `Clock` with an incremented timestamp
 2. `timestamp` to return the timestamp value of a `Clock`
@@ -35,8 +35,7 @@ defmodule Clock do
 end
 ```
 
-
-For each event, we would want to know the name of the event as well as when it happens. So, a clock is needed as well.
+For events, we would want to know the name of the event as well as when it happens. So, a clock is needed as well. Here is an example of `Event` struct that we’ll be using later on.
 
 ```elixir
 defmodule Event do
@@ -54,21 +53,21 @@ defmodule Event do
 end
 ```
 
+## Events ordering
+
+Let’s build something to demonstrate the clock and ordering of events between distributed processes. We’ll emulate distributed processes using `GenServer` and the application we’ll build is the Worst Random String Generator (WRSG)
+
+We would not focus on actually building the logic for the Generator. The goal would be to demonstrate a distributed system that satisfies DEF 1 until DEF 4. 
+
 ### Implementation Rules (IR)
 
 The implementation rules for the events and clock are quite straightforward:
 
 1. Each process will have its internal logical clock
 2. When an event happens within the process, increment the clock and assign it to the event
-3. When a process wants to send a message to another process, it will create  a `Sent` event.
-4. When process `a` sends a message to process `b`, the message must contain the `timestamp` from process `a`’s clock.
+3. When a process wants to send a message to another process, it will create a `Sent` event
+4. When process `k` sends a message to process `j`, the message must contain the `timestamp` from process `k`’s clock
 5. When a process receives a message from another process, it will create a `Received` event
-
-## Events ordering
-
-Let’s build something to demonstrate the clock and ordering of events between distributed processes. We’ll emulate distributed processes using `GenServer` and the application we’ll build is the Worst Random String Generator (WRSG)
-
-We would not focus on actually building the logic for the Generator. The goal would be to demonstrate all the implementation rules above and see if we can actually create events with Lamport’s Timestamp.
 
 We’ll start simple, with intra process events. The WRSG will be generating strings one char at a time. Every time the process receives a command to generate a char, it will create an event and observes the IR1 and IR2 above.
 
@@ -133,23 +132,23 @@ Next, in `handle_cast(:generate_char, ...)`, the process:
 Let’s try running this in `iex` (it is assumed that `Clock`, `Event` and `Generator` are already compiled)
 
 ```elixir
-iex> Generator.start_process(:a)
-iex> Generator.generate_char(:a)
-iex> Generator.generate_char(:a)
-iex> Generator.get_events(:a)
+iex> Generator.start_process(:k)
+iex> Generator.generate_char(:k)
+iex> Generator.generate_char(:k)
+iex> Generator.get_events(:k)
 [
-  %Event{clock: %Clock{process_name: :a, timestamp: 2}, name: :generate_char},
-  %Event{clock: %Clock{process_name: :a, timestamp: 1}, name: :generate_char}
+  %Event{clock: %Clock{process_name: :k, timestamp: 2}, name: :generate_char},
+  %Event{clock: %Clock{process_name: :k, timestamp: 1}, name: :generate_char}
 ]
 ```
 
-Events within a process is simple enough. We’ll move on to the interesting bit, combining with events between processes. The goal is to have 3 processes, each with its own task to complete and have messages sent from one process to another. Below is a space-time diagram to illustrate what we want to achieve.
+Events within a process are simple enough. We’ll move on to the interesting bit, combining with events between processes. The goal is to have 3 processes, each with its task to complete and have messages sent from one process to another. Below is a space-time diagram to illustrate what we want to achieve.
 
 ![](lamport-space-time-diagram.png)
 
-Each vertical line is a process, the arrows are messages being sent from one process to another and each dots are events. Here the events are colour coded. The vertical direction also helps to display movement of “time”, bottom to top representing oldest to latest. 
+Each vertical line is a process, the arrows are messages being sent from one process to another and each dot is an event. Here the events are colour coded. The vertical direction also helps to display movement of “time”, bottom to top representing oldest to latest. 
 
-If we would like our processes to behave as in the diagram above, calling `gennerate_char` from `iex` will not be adequate. We’ll need a way to inform the process of the tasks that it needs to perform. To achieve that, we’ll add a new state to the process, which is a lambda that will contain the necessary steps for the process to execute. Since the tasks for the process are within the lambda, we’ll need a way to kick off the process, let’s create a new function for that as well. Here are the changes and new methods.
+If we would like our processes to behave as in the diagram above, calling `generate_char` from `iex` will not be adequate. We’ll need a way to inform the process of the tasks that it needs to perform. To achieve that, we’ll add a new state to the process, which is an anonymous function that will contain the necessary steps for the process to execute. Since the tasks for the process are within the anonymous function, we’ll need a way to kick off the process, let’s create a new function for that as well. Here are the changes and new methods.
 
 ```elixir
 defmodule Generator do
@@ -184,59 +183,59 @@ defmodule Generator do
 end
 ```
 
-Fire up the `iex` again and let’s try to generate the same list of events as previous done.
+Fire up the `iex` again and lets try to generate the same list of events as we did previously.
 
 ```elixir
 iex> fun = fn() ->
-   > Generator.generate_char(:a)
-   > Generator.generate_char(:a)
+   > Generator.generate_char(:k)
+   > Generator.generate_char(:k)
    > end
-iex> Generator.start_process(:a, fun)
-iex> Generator.run(:a)
-iex> Generator.get_events(:a)
+iex> Generator.start_process(:k, fun)
+iex> Generator.run(:k)
+iex> Generator.get_events(:k)
 [
-  %Event{clock: %Clock{process_name: :a, timestamp: 2}, name: :generate_char},
-  %Event{clock: %Clock{process_name: :a, timestamp: 1}, name: :generate_char}
+  %Event{clock: %Clock{process_name: :k, timestamp: 2}, name: :generate_char},
+  %Event{clock: %Clock{process_name: :k, timestamp: 1}, name: :generate_char}
 ]
 ```
 
-Great! Now we could start different `Generator` processes that will run different steps if needed. Next, we need a few functions to `send` and `receive` messages between processes. A process will use these functions to ask other process to do work. For convenience, a few functions also being added to start off the 3 difference processes including the tasks that each process should be executing. As well as a function to gather all the events from all the processes.
+Great! Now we could start different `Generator` processes that will run different steps if needed. Next, we need a few functions to `send` and `receive` messages between processes. A process will use these functions to ask the other process to do work. For convenience, a few functions also being added to start off the 3 difference processes including the tasks that each process should be executing as well as a function to gather all the events from all the processes.
 
 ```elixir
 defmodule Generator do
   # Only showing the changes from the previous Generator code
- def start_process_a do
+ def start_process_k do
     fun = fn() ->
-      Generator.generate_char(:a)  
-      Generator.send_generate_message(:a, :b)
-      Generator.generate_char(:a)  
+      Generator.generate_char(:k)  
+      Generator.send_generate_message(:k, :j)
+      Generator.generate_char(:k)  
     end
 
-    Generator.start_process(:a, fun)
+    Generator.start_process(:k, fun)
   end
 
-  def start_process_b do
+  def start_process_j do
     fun = fn() ->
-      Generator.generate_char(:b)  
-      Generator.send_generate_message(:b, :c)
-      Generator.generate_char(:b)  
+      Generator.generate_char(:j)  
+      Generator.send_generate_message(:j, :i)
+      Generator.generate_char(:j)  
     end
 
-    Generator.start_process(:b, fun)
+    Generator.start_process(:j, fun)
   end
 
-  def start_process_c do
+  def start_process_i do
     fun = fn() ->
-      Generator.generate_char(:c)  
+      Generator.generate_char(:i)  
     end
 
-    Generator.start_process(:c, fun)
+    Generator.start_process(:i, fun)
   end
 
   def get_all_events do
-    get_events(:a)
-    |> Enum.concat(get_events(:b))
-    |> Enum.concat(get_events(:c))
+    get_events(:k)
+    |> Enum.concat(get_events(:j))
+    |> Enum.concat(get_events(:i))
   end
 
   def send_generate_message(from, to) do
@@ -256,6 +255,9 @@ defmodule Generator do
     {:noreply, state}
   end
 
+  @doc """
+  A process uses this function to send a message to other process
+  """
   @impl true
   def handle_cast({ :send_generate_message, to}, state = %{ name: name, events: events, clock: clock }) do
     updated_clock = Clock.increment(clock)
@@ -267,6 +269,9 @@ defmodule Generator do
     {:noreply, %{ state | clock: updated_clock }}
   end
 
+  @doc """
+  Here is the logic for creating an event to indicate the process has received a message.
+  """
   @impl true
   def handle_cast({ :received, from }, state = %{ events: events, clock: clock }) do
     updated_clock = Clock.increment(clock)
@@ -278,48 +283,47 @@ defmodule Generator do
 end
 ```
 
-The main changes surrounds the three new `handle_cast` functions. First is `handle_cast({ :generate, ...`, this is how the processes can receive message from another process in order to begin executing its tasks. Before it calls `run` notice that, the first thing a process does when it gets a `:generate` message is to invoke `handle_cast({ :received, ...`. This function’s main goal is to create a new event to mark that it has received a message.  The last function is `handle_cast({ :send_generate_message, ...`, this function is to emulate a process ability to send messages to another process. Its main purpose is to create a new event before actually sending the message.
+The main changes surround the three new `handle_cast` functions. First is `handle_cast({ :generate, ...`, this is how the processes can receive a message from another process to begin executing its tasks. Before it calls `run` notice that, the first thing a process does when it gets a `:generate` message is to invoke `handle_cast({ :received, ...`. This function’s main goal is to create a new event to mark that it has received a message.  The last function is `handle_cast({ :send_generate_message, ...`, this function’s main purpose is to create a new event before actually sending the message.
 
 Let’s give it a run in `iex`
 
 ```elixir
-iex> Generator.start_process_a
-iex> Generator.start_process_b
-iex> Generator.start_process_c
-iex> Generator.run :a
+iex> Generator.start_process_k
+iex> Generator.start_process_j
+iex> Generator.start_process_i
+iex> Generator.run :k
 ```
 
 
-
-Now that we’ve ran all the processes, if we call `Generator.get_all_events()`  and try to sort the resulting list of events, we should get something like below:
+Now that we’ve run all the processes, if we call `Generator.get_all_events()` and try to sort the resulting list of events, we should get something like below:
 
 ```elixir
 iex> events = Generator.get_all_events()
 iex> Enum.sort(events, &(Event.timestamp(&1) > Event.timestamp(&2)))
 [
-  %Event{clock: %Clock{process_name: :b, timestamp: 4}, name: :generate_char},
-  %Event{clock: %Clock{process_name: :b, timestamp: 3}, name: "sent to c"},
-  %Event{clock: %Clock{process_name: :a, timestamp: 3}, name: :generate_char},
-  %Event{clock: %Clock{process_name: :c, timestamp: 2}, name: :generate_char},
-  %Event{clock: %Clock{process_name: :b, timestamp: 2}, name: :generate_char},
-  %Event{clock: %Clock{process_name: :a, timestamp: 2}, name: "sent to b"},
-  %Event{clock: %Clock{process_name: :c, timestamp: 1}, name: "received from b"},
-  %Event{clock: %Clock{process_name: :b, timestamp: 1}, name: "received from a"},
-  %Event{clock: %Clock{process_name: :a, timestamp: 1}, name: :generate_char}
+  %Event{clock: %Clock{process_name: :j, timestamp: 4}, name: :generate_char},
+  %Event{clock: %Clock{process_name: :j, timestamp: 3}, name: "sent to i"},
+  %Event{clock: %Clock{process_name: :k, timestamp: 3}, name: :generate_char},
+  %Event{clock: %Clock{process_name: :i, timestamp: 2}, name: :generate_char},
+  %Event{clock: %Clock{process_name: :j, timestamp: 2}, name: :generate_char},
+  %Event{clock: %Clock{process_name: :k, timestamp: 2}, name: "sent to j"},
+  %Event{clock: %Clock{process_name: :i, timestamp: 1}, name: "received from j"},
+  %Event{clock: %Clock{process_name: :j, timestamp: 1}, name: "received from k"},
+  %Event{clock: %Clock{process_name: :k, timestamp: 1}, name: :generate_char}
 ]
 ```
 
-The events are not sorted properly. There are a couple of reasons for this, but one of them is because our code violated the DEF 2. To fix that, we have to alter our implementation rules a bit. Changes are in bold:
+The events are not sorted properly. There are a couple of reasons for this, but one of them is because our implementation violated DEF 2. To fix that, we have to alter our implementation rules a bit. Changes are in bold:
 
-## Updated Implementation Rules (UIR)
+### Updated Implementation Rules (UIR)
 1. Each process will have its internal logical clock
 2. When an event happens within the process, increment the clock and assign it to the event
-3. When a process wants to send a message to another process, it will create  a `Sent` event
+3. When a process wants to send a message to another process, it will create a `Sent` event
 4. When a process receives a message from another process, it will:
 	1. **Updates its internal logical clock to `max(message_timestamp, process_timestamp)`**
 	2. **Create a `received` event**
 
-Let’s update a few functions.
+Let’s update a few functions. Changes are marked in the code.
 
 ```elixir
 defmodule Generator do
@@ -331,9 +335,8 @@ defmodule Generator do
   """
   @impl true
   def handle_cast({ :generate, message_timestamp, from }, state = %{ name: name }) do
-    # start change
+    # CHANGE: added message_timestamp of sender
     GenServer.cast name, {:received, message_timestamp, from}
-    # end change
     run(name)
 
     {:noreply, state}
@@ -345,19 +348,18 @@ defmodule Generator do
     new_event = %Event{name: "sent to #{to}", clock: updated_clock }
     state = %{ state | events: [ new_event | events ] }
 
-    # start change
+    # CHANGE send process timestamp to receiver
     GenServer.cast to, { :generate, %Clock.timestamp(updated_clock), name }
-    # end change
 
     {:noreply, %{ state | clock: updated_clock }}
   end
 
   @impl true
   def handle_cast({ :received, message_timestamp, from }, state = %{ events: events, clock: clock }) do
-    # start change
+    # CHANGE take whichever the latest timestamp and create a new event using it
     latest_timestamp = max(Clock.timestamp(clock), message_timestamp)
     updated_clock = %Clock{ clock | timestamp: latest_timestamp + 1 }
-    # end change
+
     new_event = %Event{name: "received from #{from}", clock: updated_clock}
     state = %{ state | events: [ new_event | events] }
 
@@ -370,26 +372,30 @@ If we ran the processes, get all the events and sort them, the list should look 
 
 ```elixir
 [
-  %Event{clock: %Clock{process_name: :c, timestamp: 7}, name: :generate_char},
-  %Event{clock: %Clock{process_name: :c, timestamp: 6}, name: "received from b"},
-  %Event{clock: %Clock{process_name: :b, timestamp: 6}, name: :generate_char},
-  %Event{clock: %Clock{process_name: :b, timestamp: 5}, name: "sent to c"},
-  %Event{clock: %Clock{process_name: :b, timestamp: 4}, name: :generate_char},
-  %Event{clock: %Clock{process_name: :b, timestamp: 3}, name: "received from a"},
-  %Event{clock: %Clock{process_name: :a, timestamp: 3}, name: :generate_char},
-  %Event{clock: %Clock{process_name: :a, timestamp: 2}, name: "sent to b"},
-  %Event{clock: %Clock{process_name: :a, timestamp: 1}, name: :generate_char}
+  %Event{clock: %Clock{process_name: :i, timestamp: 7}, name: :generate_char},
+  %Event{clock: %Clock{process_name: :i, timestamp: 6}, name: "received from j"},
+  %Event{clock: %Clock{process_name: :j, timestamp: 6}, name: :generate_char},
+  %Event{clock: %Clock{process_name: :j, timestamp: 5}, name: "sent to i"},
+  %Event{clock: %Clock{process_name: :j, timestamp: 4}, name: :generate_char},
+  %Event{clock: %Clock{process_name: :j, timestamp: 3}, name: "received from k"},
+  %Event{clock: %Clock{process_name: :k, timestamp: 3}, name: :generate_char},
+  %Event{clock: %Clock{process_name: :k, timestamp: 2}, name: "sent to j"},
+  %Event{clock: %Clock{process_name: :k, timestamp: 1}, name: :generate_char}
 ]
 ```
 
 Now it looks better. But, there are a couple of events that still have the same timestamp and they can swap places on each ordering because their value are the same. These events are an example of `concurrent` events, as mentioned in DEF 4. And this particular kind of ordering is called `partial ordering`.
 
-The paper suggest that we could achieve `total ordering`, where there are no ambiguity or events swapping places on each order if we can find a way to break the tie. One way to achieve that is to give each process a weight and use the weight as a tiebreaker. For example, we could determine that `a > b > c` and if there are any events that share the same `timestamp`, we could fall back to the process hierarchy to determine which event sits higher in the ordering.
+The paper suggest that we could achieve `total ordering`, where there are no ambiguity or events swapping places on each ordering, if we can find a way to break the tie. One way to achieve that is to give each process a weight and use the weight as a tiebreaker. For example, we could determine that process `k > j > i` and if there are any events that share the same `timestamp`, we could fall back to the process hierarchy to determine which event sits higher in the ordering. Since in Elixir, inequality operation of atoms will use their string value, this can be achieved by changing the sorting logic to:
 
-So far we have learned about how to use Logical Clocks instead of Physical Clocks for generating and ordering events in a distributed process. In part 2, we’ll explore how to use `Lamport's Timestamp` for making decision within a distributed system and how to handle out of order events.
+```elixir
+&((Event.timestamp(&1) > Event.timestamp(&2)) || ((Event.timestamp(&1) == Event.timestamp(&2) && Event.process_name(&1) > Event.process_name(&2)))
+```
 
-#### References:
+So far, we have learned about how to use Logical Clocks instead of Physical Clocks for generating and ordering events in a distributed process. In part 2, we’ll explore how to use `Lamport Timestamp` for making decision within a distributed system and how to handle out of order events.
 
-1. [https://tools.ietf.org/html/rfc5905](https://tools.ietf.org/html/rfc5905)
-2. [https://en.wikipedia.org/wiki/Leap\_second#Issues\_created\_by\_insertion\_(or\_removal)\_of\_leap\_seconds](https://en.wikipedia.org/wiki/Leap_second#Issues_created_by_insertion_(or_removal)_of_leap_seconds)
-3. [Time, Clocks and the Ordering of Events in Distributed System [PDF]](https://lamport.azurewebsites.net/pubs/time-clocks.pdf)
+[^1]:	[https://tools.ietf.org/html/rfc5905](https://tools.ietf.org/html/rfc5905)
+
+[^2]:	[Leap second issues](https://en.wikipedia.org/wiki/Leap_second#Issues_created_by_insertion_(or_removal)_of_leap_seconds)
+
+[^3]:	https://lamport.azurewebsites.net/pubs/time-clocks.pdf
