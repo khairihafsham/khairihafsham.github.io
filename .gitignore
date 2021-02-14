@@ -1,0 +1,6 @@
+.DS_Store
+*.sw[p,o]
+public/*
+resources/*
+content/post/**/ignore/*
+*.plist
