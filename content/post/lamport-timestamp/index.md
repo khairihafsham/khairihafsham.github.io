@@ -1,6 +1,6 @@
 ---
-title: "Lamport Timestamp"
-date: 2021-01-30T19:06:44+08:00
+title: "Lamport Timestamp Part 1"
+date: 2021-02-14
 draft: false
 ---
 {{< maincontent >}}
