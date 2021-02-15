@@ -144,9 +144,9 @@ iex> Generator.get_events(:k)
 
 Events within a process are simple enough. We’ll move on to the interesting bit, combining with events between processes. The goal is to have 3 processes, each with its task to complete and have messages sent from one process to another. Below is a space-time diagram to illustrate what we want to achieve.
 
-![](lamport-space-time-diagram.png)
+![Space-time diagram. Created using Excalidraw](lamport-space-time-diagram.png)
 
-Each vertical line is a process, the arrows are messages being sent from one process to another and each dot is an event. Here the events are colour coded. The vertical direction also helps to display movement of “time”, bottom to top representing oldest to latest. 
+Each vertical line is a process, the arrows are messages being sent from one process to another and each dot is an event. Here the events are colour coded. The vertical direction also helps to display movement of “time”, bottom to top representing oldest to latest. The horizontal direction represents space, to indicate that processes are isolated from one another.
 
 If we would like our processes to behave as in the diagram above, calling `generate_char` from `iex` will not be adequate. We’ll need a way to inform the process of the tasks that it needs to perform. To achieve that, we’ll add a new state to the process, which is an anonymous function that will contain the necessary steps for the process to execute. Since the tasks for the process are within the anonymous function, we’ll need a way to kick off the process, let’s create a new function for that as well. Here are the changes and new methods.
 
