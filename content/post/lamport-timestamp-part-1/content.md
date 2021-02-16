@@ -21,7 +21,7 @@ The logical clock can be implemented simply as a counter. To view which clock be
 1. `increment` which returns a new `Clock` with an incremented timestamp
 2. `timestamp` to return the timestamp value of a `Clock`
 
-> Full implementation can be accessed [here](https://github.com/khairihafsham/journal-projects/tree/main/lamport-timestamp) and each modules have names in the first line that corresponds to a file in the repository
+> Full implementation can be accessed [here](https://github.com/khairihafsham/journal-projects/tree/main/lamport-timestamp) and each modules have a name in the first line that corresponds to a file in the repository
 
 ```elixir
 # clock.ex
