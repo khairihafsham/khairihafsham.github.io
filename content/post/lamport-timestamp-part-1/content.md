@@ -5,7 +5,7 @@ How do you order events that happens between and within distributed processes? L
 
 To sort the list of events, we would need to determine if a particular event _happens before_ another event. One option would be to tag each event with DateTime of when the event occurred. Alternatively, one could also use Unix Timestamp, instead of DateTime, and avoid all the hassle of timezone and daylight savings time. But, there is no guarantee that time runs the same in all the distributed processes. Time synchronisation with NTP have an accuracy level within tens of milliseconds, assuming the network is good and polled within 36 hours[^1]. Another risk would be _Leap Second_ and the documented problems arising from it[^2].
 
-DateTime and Unix Timestamp are considered as _Physical Clocks_. Alternative to them are _Logical Clock_ and we are going to implement one of such clock called Lamport Timestamp (or Lamport’s Logical Clock). The implementation is heavily inspired by the famous paper by Leslie Lamport, titled “Time, Clocks, and the Ordering of Events in a Distributed System”[^3]. Anytime _clock_ is mentioned after this, it will refer to _Logical Clock_. Below are a few definitions that has been extracted from the paper.
+DateTime and Unix Timestamp are considered as _Physical Clocks_. Alternative to them are _Logical Clocks_ and we are going to implement one of such clock called Lamport Timestamp (or Lamport’s Logical Clock). The implementation is heavily inspired by the famous paper by Leslie Lamport, titled “Time, Clocks, and the Ordering of Events in a Distributed System”[^3]. Anytime _clock_ is mentioned after this, it will refer to _Logical Clock_. Below are a few definitions that has been extracted from the paper.
 
 ## Definition (DEF)
 
@@ -38,7 +38,7 @@ defmodule Clock do
 end
 ```
 
-For events, we would want to know the name of the event as well as when it happens. So, a clock is needed as well. Here is an example of `Event` struct that we’ll be using later on.
+For events, we would want to know the name of the event as well as when it happened. So, a clock is needed as well. Here is an example of `Event` struct that we’ll be using later on.
 
 ```elixir
 # event.ex
