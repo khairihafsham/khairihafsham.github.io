@@ -21,7 +21,10 @@ The logical clock can be implemented simply as a counter. To view which clock be
 1. `increment` which returns a new `Clock` with an incremented timestamp
 2. `timestamp` to return the timestamp value of a `Clock`
 
+> Full implementation can be accessed [here](https://github.com/khairihafsham/journal-projects/tree/main/lamport-timestamp) and each modules have names in the first line that corresponds to a file in the repository
+
 ```elixir
+# clock.ex
 defmodule Clock do
   defstruct [:timestamp, :process_name]
 
@@ -38,6 +41,7 @@ end
 For events, we would want to know the name of the event as well as when it happens. So, a clock is needed as well. Here is an example of `Event` struct that we’ll be using later on.
 
 ```elixir
+# event.ex
 defmodule Event do
   defstruct [:name, :clock]
 
@@ -65,15 +69,15 @@ The implementation rules for the events and clock are quite straightforward:
 
 1. Each process will have its internal logical clock
 2. When an event happens within the process, increment the clock and assign it to the event
-3. When a process wants to send a message to another process, it will create a `Sent` event
-4. When process `k` sends a message to process `j`, the message must contain the `timestamp` from process `k`’s clock
-5. When a process receives a message from another process, it will create a `Received` event
+3. When a process wants to send a message to another process, it will create a `sent` event
+4. When a process receives a message from another process, it will create a `received` event
 
 We’ll start simple, with intra process events. The WRSG will be generating strings one char at a time. Every time the process receives a command to generate a char, it will create an event and observes the IR1 and IR2 above.
 
 Here is the starting code:
 
 ```elixir
+# generator1.ex
 require Event
 require Clock
 
@@ -144,18 +148,21 @@ iex> Generator.get_events(:k)
 
 Events within a process are simple enough. We’ll move on to the interesting bit, combining with events between processes. The goal is to have 3 processes, each with its task to complete and have messages sent from one process to another. Below is a space-time diagram to illustrate what we want to achieve.
 
-![Space-time diagram. Created using Excalidraw](lamport-space-time-diagram.png)
+![Space-time diagram. Created using Excalidraw](lamport-space-time-diagram.png "Fig. 1: Space-time diagram. Created using Excalidraw")
 
 Each vertical line is a process, the arrows are messages being sent from one process to another and each dot is an event. Here the events are colour coded. The vertical direction also helps to display movement of “time”, bottom to top representing oldest to latest. The horizontal direction represents space, to indicate that processes are isolated from one another.
 
-If we would like our processes to behave as in the diagram above, calling `generate_char` from `iex` will not be adequate. We’ll need a way to inform the process of the tasks that it needs to perform. To achieve that, we’ll add a new state to the process, which is an anonymous function that will contain the necessary steps for the process to execute. Since the tasks for the process are within the anonymous function, we’ll need a way to kick off the process, let’s create a new function for that as well. Here are the changes and new methods.
+If we would like our processes to behave as in _Fig. 1_, calling `generate_char` from `iex` will not be adequate. We’ll need a way to inform the process of the tasks that it needs to perform. To achieve that, we’ll add a new state to the process, which is an anonymous function that will contain the necessary steps for the process to execute. Since the tasks for the process are within the anonymous function, we’ll need a way to kick off the process, let’s create a new function for that as well. Here are the changes and new methods.
 
 ```elixir
+# generator2.ex
 defmodule Generator do
   # Only showing the changes from the previous Generator code
 
-  # func will be function that contains the tasks to be executed
-  # by the process when run() is called
+  @doc """
+  func will be function that contains the tasks to be executed
+  by the process when run() is called
+  """
   def start_process(name, func) do
     GenServer.start_link __MODULE__, %{name: name, func: func}, name: name 
   end
@@ -199,9 +206,10 @@ iex> Generator.get_events(:k)
 ]
 ```
 
-Great! Now we could start different `Generator` processes that will run different steps if needed. Next, we need a few functions to `send` and `receive` messages between processes. A process will use these functions to ask the other process to do work. For convenience, a few functions also being added to start off the 3 difference processes including the tasks that each process should be executing as well as a function to gather all the events from all the processes.
+Great! Now we could start different `Generator` processes that will run different steps if needed. Next, we need a few functions to `send` and `receive` messages between processes. A process will use these functions to ask the other process to do work. For convenience, a few functions also being added to start off the 3 difference processes including the tasks that each process should be executing. There is also a new function named `get_all_events`for gathering events from all the processes.
 
 ```elixir
+# generator3.ex
 defmodule Generator do
   # Only showing the changes from the previous Generator code
  def start_process_k do
@@ -261,7 +269,7 @@ defmodule Generator do
   @impl true
   def handle_cast({ :send_generate_message, to}, state = %{ name: name, events: events, clock: clock }) do
     updated_clock = Clock.increment(clock)
-    new_event = %Event{name: :sent_message, clock: updated_clock }
+    new_event = %Event{name: "sent to #{to}", clock: updated_clock }
     state = %{ state | events: [ new_event | events ] }
 
     GenServer.cast to, { :generate, name }
@@ -283,7 +291,7 @@ defmodule Generator do
 end
 ```
 
-The main changes surround the three new `handle_cast` functions. First is `handle_cast({ :generate, ...`, this is how the processes can receive a message from another process to begin executing its tasks. Before it calls `run` notice that, the first thing a process does when it gets a `:generate` message is to invoke `handle_cast({ :received, ...`. This function’s main goal is to create a new event to mark that it has received a message.  The last function is `handle_cast({ :send_generate_message, ...`, this function’s main purpose is to create a new event before actually sending the message.
+The main changes surround the three new `handle_cast` functions. First is `handle_cast({ :generate, ...`, this is how the processes can receive a message from another process to begin executing its tasks. Before it calls `run` notice that, the first thing a process does is to invoke `handle_cast({ :received, ...`, which creates a new event to mark that it has received a message.  The last function is `handle_cast({ :send_generate_message, ...`, this function’s main purpose is to create a new event before actually sending the message.
 
 Let’s give it a run in `iex`
 
@@ -294,8 +302,7 @@ iex> Generator.start_process_i
 iex> Generator.run :k
 ```
 
-
-Now that we’ve run all the processes, if we call `Generator.get_all_events()` and try to sort the resulting list of events, we should get something like below:
+Now that all the processes are running, if we call `Generator.get_all_events()` and try to sort the resulting list of events, we should get something like below:
 
 ```elixir
 iex> events = Generator.get_all_events()
@@ -313,12 +320,12 @@ iex> Enum.sort(events, &(Event.timestamp(&1) > Event.timestamp(&2)))
 ]
 ```
 
-The events are not sorted properly. There are a couple of reasons for this, but one of them is because our implementation violated DEF 2. To fix that, we have to alter our implementation rules a bit. Changes are in bold:
+If compared to _Fig. 1_, the events are not sorted properly. There are a couple of reasons for this, but one of them is because our implementation violated DEF 2. To fix that, we have to alter our implementation rules a bit. Changes are in bold:
 
-### Updated Implementation Rules (UIR)
+### Updated Implementation Rules
 1. Each process will have its internal logical clock
 2. When an event happens within the process, increment the clock and assign it to the event
-3. When a process wants to send a message to another process, it will create a `Sent` event
+3. When a process wants to send a message to another process, it will create a `sent` event
 4. When a process receives a message from another process, it will:
 	1. **Updates its internal logical clock to `max(message_timestamp, process_timestamp)`**
 	2. **Create a `received` event**
@@ -326,6 +333,7 @@ The events are not sorted properly. There are a couple of reasons for this, but 
 Let’s update a few functions. Changes are marked in the code.
 
 ```elixir
+# generator4.ex
 defmodule Generator do
 
  ### GENSERVER IMPLEMENTATIONS ###
@@ -342,6 +350,9 @@ defmodule Generator do
     {:noreply, state}
   end
 
+  @doc """
+  A process uses this function to send a message to other process
+  """
   @impl true
   def handle_cast({ :send_generate_message, to}, state = %{ name: name, events: events, clock: clock }) do
     updated_clock = Clock.increment(clock)
@@ -354,6 +365,9 @@ defmodule Generator do
     {:noreply, %{ state | clock: updated_clock }}
   end
 
+  @doc """
+  Here is the logic for creating an event to indicate the process has received a message.
+  """
   @impl true
   def handle_cast({ :received, message_timestamp, from }, state = %{ events: events, clock: clock }) do
     # CHANGE take whichever the latest timestamp and create a new event using it
@@ -368,7 +382,7 @@ defmodule Generator do
 end
 ```
 
-If we ran the processes, get all the events and sort them, the list should look something like below:
+If we repeat all the steps again, we’ll get:
 
 ```elixir
 [
@@ -386,7 +400,7 @@ If we ran the processes, get all the events and sort them, the list should look 
 
 Now it looks better. But, there are a couple of events that still have the same timestamp and they can swap places on each ordering because their value are the same. These events are an example of `concurrent` events, as mentioned in DEF 4. And this particular kind of ordering is called `partial ordering`.
 
-The paper suggest that we could achieve `total ordering`, where there are no ambiguity or events swapping places on each ordering, if we can find a way to break the tie. One way to achieve that is to give each process a weight and use the weight as a tiebreaker. For example, we could determine that process `k > j > i` and if there are any events that share the same `timestamp`, we could fall back to the process hierarchy to determine which event sits higher in the ordering. Since in Elixir, inequality operation of atoms will use their string value, this can be achieved by changing the sorting logic to:
+The paper suggest that we could achieve `total ordering`, where there are no ambiguity or events swapping places, if we can find a way to break the tie. One way to achieve that is to give each process a weight and use the weight as a tiebreaker. For example, we could determine that process `k > j > i` and if there are any events that share the same `timestamp`, we could fall back to the process hierarchy to determine which event sits higher in the ordering. Since in Elixir, inequality operation of atoms will use their string value, this can be achieved by changing the sorting logic to:
 
 ```elixir
 &((Event.timestamp(&1) > Event.timestamp(&2)) || ((Event.timestamp(&1) == Event.timestamp(&2) && Event.process_name(&1) > Event.process_name(&2)))
